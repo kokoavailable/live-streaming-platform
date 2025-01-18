@@ -3,3 +3,10 @@ server:
   rtmp_port: 1935
   record_path: "./recordings"
   bitrate: auto
+
+server:
+- appname: live
+  live: true
+  hls: true
+  api: true
+  flv: true
