@@ -24,11 +24,15 @@ type RtmpStream struct {
 }
 
 func NewRtmpStream() *RtmpStream {
+	// return 의 줄임말.
 	ret := &RtmpStream{
-		streams: &sync.Map{},
+		streams: &sync.Map{}, // 동시성 맵. 내부적으로 락이나 원자적 연산을 통해여러 고루틴이 동시에 접근해도 안전하게 동작한다.
+		// load, store, delete, range 메서드로 데이터를 안전하게 읽고 쓸 수 있음.
+		// interface{} 형 키밸류를 가지며 range 메서드를 통해 익명함수로 순회.
 	}
-	go ret.CheckAlive()
-	return ret
+	go ret.CheckAlive() // 생성한 스트림 객체의 상태를 5초마다 주기 적으로 확인하는 고루틴 실행
+
+	return ret // 초기화된 RtmpStream 객체 반환
 }
 
 func (rs *RtmpStream) HandleReader(r av.ReadCloser) {
@@ -93,6 +97,8 @@ func (rs *RtmpStream) CheckAlive() {
 		// 이후 스트림 구조체의 메서드에 정의된 checkAlive를 호출합니다.
 		rs.streams.Range(func(key, val interface{}) bool {
 			v := val.(*Stream)
+
+			// 반환값이 0 이라면 살아있는 웹소켓도, 스트림리더도 없다는 뜻이니 정리한다.
 			if v.CheckAlive() == 0 {
 				rs.streams.Delete(key)
 			}
@@ -115,9 +121,10 @@ type Stream struct {
 	info    av.Info       // 스트림 메타 데이터
 }
 
+// 스트림에 연결된 클라이언트의 writer를 관리하는 구조체
 type PackWriterCloser struct {
-	init bool
-	w    av.WriteCloser
+	init bool           // 초기화 여부. 올바르게 초기화 되었는지 확인
+	w    av.WriteCloser // writeCloser 인터페이스를 구현하는 구조체
 }
 
 func (p *PackWriterCloser) GetWriter() av.WriteCloser {
@@ -353,7 +360,7 @@ func (s *Stream) TransStart() {
 		}
 
 		s.cache.Write(p)
-
+		//sync.Map
 		s.ws.Range(func(key, val interface{}) bool {
 			v := val.(*PackWriterCloser)
 			if !v.init {
@@ -388,17 +395,28 @@ func (s *Stream) TransStop() {
 	s.isStart = false
 }
 
+// 해당 메서드는 스트림의 리더와 라이터 리소스가 활성 상태인지 확인하고, 비활성 리소스를 정리하는 역할을 한다.
+// 또한 활성상태의 리소스 개수를 반환한다.
 func (s *Stream) CheckAlive() (n int) {
+	// 스트림의 데이터 소스를 나타내는 리더로부터 에러 체크, 스트림의 시작 체크
+	// r은 서버로부터 데이터를 읽으며, 주로 업스트림 데이터를 처리한다. (스트리머가 서버로 비디오/ 오디오 전송)
+
 	if s.r != nil && s.isStart {
 		if s.r.Alive() {
-			n++
+			n++ // 반환값으로 설정되어 0부터 시작
 		} else {
 			s.r.Close(fmt.Errorf("read timeout"))
+			// 스트림 비활성 상태로 간주
 		}
 	}
 
+	// 스트림이 비활성화돼도, 웹소켓 연결은 여전히 유지되고, 클라이언트는 스트리밍이 복구되기를 기다릴 수 있다.
+
+	// 웹소켓 유효성 체크
+	// 서버에서 클라이언트로 데이터를 전송하는 역할을 하며, 주로 다운스트림 데이터를 처리한다. (시청자가 서버측으로부터 스트리밍 데이터 수신)
+	// 하나의 스트림에는 여러개의 웹소켓이 연결될 수 있다.
 	s.ws.Range(func(key, val interface{}) bool {
-		v := val.(*PackWriterCloser)
+		v := val.(*PackWriterCloser) // 타입 단언
 		if v.w != nil {
 			//Alive from RWBaser, check last frame now - timestamp, if > timeout then Remove it
 			if !v.w.Alive() {

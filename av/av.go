@@ -61,14 +61,15 @@ var (
 // Header can be converted to AudioHeaderInfo or VideoHeaderInfo
 // 스트리밍 데이터를 담고 있는 패킷의 메타데이터와 실제 데이터를 정의한 구조체이다.
 // 이 구조체는 비디오 스트리밍 시스템에서 데이터 전송의 기본 단위로 사용된다.
+// 메타데이터는 해상도, 프레임속도, gop 등의 정보 표시
 type Packet struct {
 	IsAudio    bool
 	IsVideo    bool
 	IsMetadata bool
-	TimeStamp  uint32 // dts
-	StreamID   uint32
+	TimeStamp  uint32 // dts. packet header 의 컴포지션 타임과 함께 사용
+	StreamID   uint32 // 스트림의 고유 id
 	Header     PacketHeader
-	Data       []byte
+	Data       []byte // 패킷의 실제 데이터 (오디오, 비디오, 메타데이터)
 }
 
 // 패킷의 헤더 정보로, 오디오/비디오와 관련된 메타 데이터를 담는다.
@@ -86,12 +87,25 @@ type AudioPacketHeader interface {
 	AACPacketType() uint8 // AAC 패킷 타입 반환 (헤더/데이터 구분)
 }
 
+// 키 프레임은 비디오 데이터에서 중요한 역할을 하는 프레임으로, 디코딩에 필요한 전체 데이터를 포함하고 있다.
+// 키프레임은 독립적으로 디코딩이 가능하며, 다른 프레임(P,B)은 키 프레임을 참조해 디코딩 된다. 해당 지점의 키프레임부터 디코딩 시작
+// 비디오 인코딩에서 키프레임은 GOP(Group of pictures)단위로 삽입되며 첫프레임이다.
+// 각 프레임은 한개 이상의 패킷으로 전송된다.
+
+// 시퀀스 헤더는 비디오 코덱등 스트림의 기본 설정 정보를 포함한다. RTMP에서는 AMF에서 제공되기도 한다.
+// 컴포지션 타임은 프레임의 디코딩 시간과 화면에 표시되는 시간 사이의 차이이다. pts, dts
+// pts 는 프레임이 화면에 재생되어야 하는 순서를 결정한다. dts는 프레임이 디코더에서 디코딩 되어야 하는 시간을 나타낸다.
+// i 프레임은 키 프레임으로 PTS와 DTS가 동일하다(decoding, presentation)
+// b프레임같이 디코딩순서와 표시 순서가 다른 경우 중요.비디오와 오디오와 간의 네트워크 동기화에 사용한다.
+// PTS를 비교해 오디오가 먼저 도착한 경우 오디오를 지연시킴. 비디오가 먼저 도착한 경우 비디오를 지연시킴.
+// p 프레임(predictive)은 이전 프레임을 참조해 디코딩한다. b는 이전프레임과 이후 프레임을 모두 참조해 디코딩한다.
+// b는 p프레임의 사이에 위치하고 p프레임을 참조해 디코딩한다. 압축효율이 더 좋으나 시간이 더 많이 든다.
 type VideoPacketHeader interface {
-	PacketHeader
-	IsKeyFrame() bool
-	IsSeq() bool
-	CodecID() uint8
-	CompositionTime() int32
+	PacketHeader            // 공통 부모 인터페이스
+	IsKeyFrame() bool       // 키 프레임 여부 반환
+	IsSeq() bool            // 시퀀스 헤더 여부 반환
+	CodecID() uint8         // 비디오 코덱 ID 반환(H.264)
+	CompositionTime() int32 // 컴포지션 타임 오프셋 반환
 }
 
 type Demuxer interface {
@@ -131,6 +145,7 @@ type Closer interface {
 	Close(error)
 }
 
+// 시스템에서 타임스탬프 계산
 type CalcTime interface {
 	CalcBaseTimestamp()
 }
@@ -161,9 +176,10 @@ type ReadCloser interface {
 	Read(*Packet) error
 }
 
+// 구성된 인터페이스 write closer 정의
 type WriteCloser interface {
 	Closer
 	Alive
-	CalcTime
+	CalcTime // 타임스탬프 계산 관련 인터페이스
 	Write(*Packet) error
 }

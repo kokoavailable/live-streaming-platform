@@ -185,6 +185,8 @@ func main() {
 		// RTMP 스트림 객체를 생성하는 코드 입니다. RTMP 스트리밍 데이터를 관리하고, 클라이언트와의 스트리밍 세션을 처리합니다.
 		stream := rtmp.NewRtmpStream()
 		var hlsServer *hls.Server
+
+		// app 구조체에 hls가 true 이면 hls 서버를 실행한다.
 		if app.Hls {
 			hlsServer = startHls()
 		}
