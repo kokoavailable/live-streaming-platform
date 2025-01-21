@@ -5,6 +5,7 @@
 
 [Visit the Original Repository](https://github.com/gwuhaolin/livego)
 
+참고 고문법 예제 https://mingrammer.com/gobyexample/
 
 ## 프로젝트
 
