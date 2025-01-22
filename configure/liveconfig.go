@@ -129,9 +129,18 @@ func initDefault() {
 	defer Init() //panic 외에도 현재 함수의 실행이 종료되기 직전에 항상 실행된다.
 
 	// Default config
+	// JSON은 문자열 기반의 데이터 표현 형식으로,텍스트 기반이다.
+	// 컴퓨터는 텍스트를 UTF-8등의 인코딩을 거쳐 이진데이터로 변환하여 처리한다.
+	// marshal은 데이터를 json으로 직렬화하고, 바이트 배열로 반환한다.(네트워크 전송, 파일 저장 등에 사용)
+
 	b, _ := json.Marshal(defaultConf)
+	// 생성하는 리더 객체는 prevRune를 통해 이전 UTF-8 룬 위치를 관리하고
+	// i를 통해 현재 위치를 관리하며 데이터를 순차적으로 처리할 수 있도록 한다.
+	// 이를 통해 바이트 배열을 스트림처럼 다루며, UTF-8 룬 단위로 안전하게 데이터를 읽거나 탐색할 수 있다.
 	defaultConfig := bytes.NewReader(b)
+	// 패키지 단위 함수로 실행하면 , 따로 객체를 생성하지 않더라도, 전역 객체에 할당된다.
 	viper.SetConfigType("json")
+	// v config (전역 go객체 맵)에 defaultConfig 정보 저장
 	viper.ReadConfig(defaultConfig)
 	Config.MergeConfigMap(viper.AllSettings())
 

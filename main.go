@@ -20,7 +20,9 @@ import (
 var VERSION = "master"
 
 func startHls() *hls.Server {
+	// hls 서버 주소 읽어오기
 	hlsAddr := configure.Config.GetString("hls_addr")
+	// 서버주소로 tcp 연결 생성
 	hlsListen, err := net.Listen("tcp", hlsAddr)
 	if err != nil {
 		log.Fatal(err)
@@ -190,6 +192,7 @@ func main() {
 		if app.Hls {
 			hlsServer = startHls()
 		}
+		// 느슨한 결합
 		if app.Flv {
 			startHTTPFlv(stream)
 		}
