@@ -17,14 +17,34 @@ const (
 	audioSID = 0xc0
 )
 
+/*
+MPEG TS 형식으로 데이터를 멀티플렉싱 하는데 사용되는 구조체이다.
+비디오, 오디오, 메타 데이터 스트림을 결합해 TS 패킷 스트림을 생성한다.
+
+Countinuity Counter 는 MPEG-TS 에서 사용하는 4비트 크기의 필드로, TS 패킷의 연속성을 확인하기 위한 값이다.
+0부터 15까지 순환하여 증가하며 클라이언트는 각 패킷의 CC를 확인해 올바른 순서로 패킷을 재조립한다.
+
+ts 패킷의 고정크기는 188바이트이며
+각 TS 패킷에는 비디오, 오디오, PAT, PMT와 같은 데이터가 포함될 수 있다.
+
+PAT (Packet Association Table)
+TS 스트림에 포함된 데이터를 해석할 수 있도록 제공되는 테이블 정보이다.
+TS 스트림에 포함된 프로그램 목록과 각 프로그램의 세부 정보가 저장된 위치(PMT PID)를 제공한다.
+클라이언트는 PAT를 읽어 프로그램 목록과 PMT 위치를 확인한다.
+
+PMT (Program Map Table)
+특정 프로그램에 포함된 스트림(비디오, 오디오, 자막 등)의 PID와 스트림 타입 정보를 제공한다.
+PAT를 통해 PMT의 위치를 찾고, PMT를 읽어 프로그램 구성 정보를 확인한다.
+각 프로그램은 고유한 PMT를 가질 수 있다.
+*/
 type Muxer struct {
-	videoCc  byte
-	audioCc  byte
-	patCc    byte
-	pmtCc    byte
-	pat      [tsPacketLen]byte
-	pmt      [tsPacketLen]byte
-	tsPacket [tsPacketLen]byte
+	videoCc  byte              // 비디오 스트림의 CC
+	audioCc  byte              // 오디오 스트림의 CC
+	patCc    byte              // Packet Association Table의 CC
+	pmtCc    byte              // Program Map Table의 CC
+	pat      [tsPacketLen]byte // PAT.
+	pmt      [tsPacketLen]byte // PMT. 프로그램 번호, 스트림의 데이터 위치(비디오 오디오등), 스트림 타입
+	tsPacket [tsPacketLen]byte // 최종으로 생성되는 TS 패킷 이다
 }
 
 func NewMuxer() *Muxer {
@@ -32,12 +52,15 @@ func NewMuxer() *Muxer {
 }
 
 func (muxer *Muxer) Mux(p *av.Packet, w io.Writer) error {
-	first := true
-	wBytes := 0
-	pesIndex := 0
-	tmpLen := byte(0)
-	dataLen := byte(0)
 
+	/*
+		TS 패킷 생성 과정에서 사용되는 제어 변수이다. TS패킷 생성 및 데이터 복사 과정을 관리하고 제어하는데 사용된다.
+	*/
+	first := true      // 첫번쨰 TS 패킷인지 확인하는 플래그이다. TS 패킷의 첫번째에는 PES 헤더가 포함된다.
+	wBytes := 0        // p.DATA에서 이미 복사한 데이터의 바이트 수를 추적한다. PES데이터를 여러 TS 패킷으로 나눠야 하는 경우, offset 의 역할을 수행한다.
+	pesIndex := 0      // 보통 첫번쨰 TS 패킷에 PES 헤더가 포함되나, TS패킷의 페이로드를 초과해 여러 TS 패킷으로 오는 경우가 있다. 이때 오프셋의 역할을 수행한다
+	tmpLen := byte(0)  // (임시 변수) 현재 TS 패킷에 복사할 수 있는 데이터의 크기를 임시로 저장한다. PES 헤더나 본문 데이터가 TS 패킷 크기를 초과하지 않도록 계산하는 데 사용된다.
+	dataLen := byte(0) // PES 본문 데이터의 남은 크기를 추적하는 변수. TS 패킷 생성 반복 중 한 번에 처리한 데이터 크기만큼 줄어들며 모든 데이터가 처리되면 0이 된다.
 	var pes pesHeader
 	dts := int64(p.TimeStamp) * int64(h264DefaultHZ)
 	pts := dts

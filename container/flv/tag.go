@@ -172,7 +172,7 @@ func (tag *Tag) ParseMediaTagHeader(b []byte, isVideo bool) (n int, err error) {
 	return
 }
 
-// FLV 오디오 태그 헤더를 파싱하여 데이터의 메타 정보를 추출한다.
+// FLV 오디오 태그 헤더를 파싱하여 오디오 데이터의 메타 정보를 추출한다.
 func (tag *Tag) parseAudioHeader(b []byte) (n int, err error) {
 	if len(b) < n+1 {
 		err = fmt.Errorf("invalid audiodata len=%d", len(b))
@@ -195,18 +195,25 @@ func (tag *Tag) parseAudioHeader(b []byte) (n int, err error) {
 	return
 }
 
+// FLV 비디오 태그 헤더를 파싱하여 비디오 데이터의 메타정보를 추출한다.
 func (tag *Tag) parseVideoHeader(b []byte) (n int, err error) {
 	if len(b) < n+5 {
 		err = fmt.Errorf("invalid videodata len=%d", len(b))
 		return
 	}
 	flags := b[0]
-	tag.mediat.frameType = flags >> 4
-	tag.mediat.codecID = flags & 0xf
+	tag.mediat.frameType = flags >> 4 // 상위 4비트
+	tag.mediat.codecID = flags & 0xf  // 하위 4비트
 	n++
+	// avcPacketType은 AVC 데이터의 타입을 나타내므로, 인터 프레임이나 키 프레임에서만 필요하다.
 	if tag.mediat.frameType == av.FRAME_INTER || tag.mediat.frameType == av.FRAME_KEY {
 		tag.mediat.avcPacketType = b[1]
 		for i := 2; i < 5; i++ {
+			/* composition time 은 flv에서 디코딩된 데이터가 재생되기까지의 시간 차이를 나타내는 값이다.
+			이 값은 3 바이트 (빅 엔디언) 데이터로 저장되어 있으며, 정수로 변환하기 위해 비트 시프트와 덧셈을 사용한다.
+			P, B 프레임에서 주로 사용된다.
+			b[2], b[3], b[4]가 이 컴포지션 타임이다. 24비트 16,777,215 최대 4.66시간 표현 가능
+			*/
 			tag.mediat.compositionTime = tag.mediat.compositionTime<<8 + int32(b[i])
 		}
 		n += 4
