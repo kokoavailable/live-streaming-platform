@@ -37,8 +37,8 @@ type Source struct {
 	demuxer     *flv.Demuxer  // FLV 데이터를 디멀티 플렉싱 한 후, 코덱 분석 및 동기화 작업을 수행할 때 임시로 데이터를 저장하는 버퍼
 	muxer       *ts.Muxer     // TS 포맷으로 변환된 최종 데이터를 임시로 저장하는 버퍼. 캐시 또는 클라이언트 전송 전에 데이터 준비에 사용
 	pts, dts    uint64
-	stat        *status
-	align       *align
+	stat        *status // 스트리밍 세션의 상태를 관리한다
+	align       *align // 스트리밍 데이터의 정렬과 시간 동기화를 처리한다.
 	cache       *audioCache
 	tsCache     *TSCacheItem
 	tsparser    *parser.CodecParser
