@@ -37,13 +37,13 @@ type Source struct {
 	demuxer     *flv.Demuxer  // FLV 데이터를 디멀티 플렉싱 한 후, 코덱 분석 및 동기화 작업을 수행할 때 임시로 데이터를 저장하는 버퍼
 	muxer       *ts.Muxer     // TS 포맷으로 변환된 최종 데이터를 임시로 저장하는 버퍼. 캐시 또는 클라이언트 전송 전에 데이터 준비에 사용
 	pts, dts    uint64
-	stat        *status // 스트리밍 세션의 상태를 관리한다
-	align       *align // 스트리밍 데이터의 정렬과 시간 동기화를 처리한다.
-	cache       *audioCache
-	tsCache     *TSCacheItem
-	tsparser    *parser.CodecParser
-	closed      bool
-	packetQueue chan *av.Packet
+	stat        *status             // 스트리밍 세션의 상태를 관리한다
+	align       *align              // 스트리밍 데이터의 정렬과 시간 동기화를 처리한다.
+	cache       *audioCache         // 오디오 데이터를 임시로 저장하는 오디오 캐시. 오디오는 시간 동기화에 민감하기 때문에 추가 캐시 필요.
+	tsCache     *TSCacheItem        // TS 캐시. 저장된 TS 패킷을 임시저장해 세그먼트를 생성한다
+	tsparser    *parser.CodecParser // Ts 패킷을 분석하고 코덱 정보를 파싱하는데 사용되는 파서 객체이다. PTS, DTS, 키프레임 여부와 같은 데이터를 TS 패킷으로 변환할떄 사용한다.
+	closed      bool                // 스트리밍 세션이 종료되었는지 여부를 나타내는 플래그. 리소스 해제와 새 데이터 처리를 중단하기 위해 필요하다.
+	packetQueue chan *av.Packet     // 스트리밍 데이터를 처리하기 위한 Go의 채널.
 }
 
 func NewSource(info av.Info) *Source {
@@ -61,13 +61,18 @@ func NewSource(info av.Info) *Source {
 		bwriter:     bytes.NewBuffer(make([]byte, 100*1024)),
 		packetQueue: make(chan *av.Packet, maxQueueNum),
 	}
+	// 패킷 전송 작업은 별도의 고루틴에서 실행한다.
 	go func() {
+		// SendPacket 함수로 패킷 전송을 수행한다.
 		err := s.SendPacket()
 		if err != nil {
+			// 에러 발생 시 디버그 로그 출력 및 스트림 종료
 			log.Debug("send packet error: ", err)
 			s.closed = true
 		}
 	}()
+
+	// 초기화된 source 구조체를 반환한다.
 	return s
 }
 
@@ -75,16 +80,23 @@ func (source *Source) GetCacheInc() *TSCacheItem {
 	return source.tsCache
 }
 
+// 패킷 큐 초과시 큐의 크기를 조정하는 메서드이다. 중요 패킷 (SPS, 키프레임, 오디오)등은 유지하고, 덜 중요한 패킷을 삭제하여 스트림 품질을 유지한다.
+// SPS(Sequence Parameter Set) 비디오 스트림의 디코딩과 재생을 위한 중요한 설정 정보를 포함하고 있다.
+//
+
+// 패킷이 저장된 채널을 가지고, 메타 데이터 정보를 가져온다. 스트림의 메타 데이터 정보를 가지고 온다.
+// 이 메서드는 2~3 단계에서 동작 한다. 패킷이 큐에 저장 된후 큐가 가득 찬 경우 실행된다. 중요 패킷을 유지하며 덜 중요한 패킷을 삭제한다.
 func (source *Source) DropPacket(pktQue chan *av.Packet, info av.Info) {
-	log.Warningf("[%v] packet queue max!!!", info)
-	for i := 0; i < maxQueueNum-84; i++ {
-		tmpPkt, ok := <-pktQue
+	log.Warningf("[%v] packet queue max!!!", info) // 패킷 큐가 최대 크기를 초과했음을 로그로 경고한다.
+	// i가 84를 넘으면 추가 반복이 이루어 지지 않을 수 있는데.. 이부분은 경험적으로 설정된 값일 가능성이 크다.
+	for i := 0; i < maxQueueNum-84; i++ { // 큐가 초과된 경우, 반복문을 통해 패킷을 제거한다( <- pktQue)
+		tmpPkt, ok := <-pktQue // 패킷 큐에서 한개의 패킷을 꺼냄.
 		// try to don't drop audio
 		if ok && tmpPkt.IsAudio {
-			if len(pktQue) > maxQueueNum-2 {
-				<-pktQue
+			if len(pktQue) > maxQueueNum-2 { // 패킷 큐의 현재 길이가 최대 큐 크기에서 2개 이내로 남은 상태인지 확인.
+				<-pktQue // 큐가 거의 가득 찼다면 오디오 패킷도 삭제
 			} else {
-				pktQue <- tmpPkt
+				pktQue <- tmpPkt // 중요하므로 다시 큐에 추가.
 			}
 		}
 
