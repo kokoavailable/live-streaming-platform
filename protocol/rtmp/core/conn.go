@@ -20,14 +20,20 @@ const (
 	idSetPeerBandwidth
 )
 
+/*
+RTMP에서 송신 측 윈도우 확인 응답 크기를 나타내는 값이다.
+이 값은 송신 측 데이터를 전송할때, ACK 응답을 기다리기 전 송신할 수 있는 최대의 크기이다.
+데이터를 전송했지만, 혼잡이나 다른 문제로 인해 수신측 데이터를 제대로 받지 못하는 경우를 체크하기 위해 ACK이 필요하다.
+
+*/
 type Conn struct {
 	net.Conn                   // 기본 GO 인터페이스를 상속했다.
 	chunkSize           uint32 // 송신측 청크 사이즈. 데이터 전송시 한번에 전송하는 데이터 블록의 크기이다.
 	remoteChunkSize     uint32 // 수신측 청크 사이즈. 수신시 해당 크기로 수신한다.
 	windowAckSize       uint32 // 송신측의 윈도우 확인 응답 크기. 상대방의 ACK를 기다리기 위해 사용한다.
-	remoteWindowAckSize uint32
-	received            uint32
-	ackReceived         uint32
+	remoteWindowAckSize uint32 // 수신측의 윈도우 확인 응답 크기. 상대방의 ACK을 기다리기 위해 사용한다.
+	received            uint32 // 송신 데이터의 누적크기
+	ackReceived         uint32 // 수신 데이터의 누적크기
 	rw                  *ReadWriter
 	pool                *pool.Pool
 	chunks              map[uint32]ChunkStream
