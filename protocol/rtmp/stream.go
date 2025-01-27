@@ -107,12 +107,12 @@ func (rs *RtmpStream) CheckAlive() {
 	}
 }
 
-// RTMP 스트리밍과 관련된 핵심 데이터를 관리하는데 적합하게 설계된 구조체 입니다.
+// RTMP 스트리밍과 관련된 핵심 데이터를 관리하는데 적합하게 설계된 구조체.
 // 주요 필드들이 스트림의 상태, 데이터, 연결된 클라이언트 정보를 관리할 수 있도록 구성돼 있어,
-// 실시간 스트리밍 앱에서 사용하기 적합한 구조 입니다.
-// 캐시를 통해 서버에서 미리 저장한 데이터를 전달해 클라이언트가 데이터를 원활하게 받을 수 있도록합니다.
-// 연결 복구시에도 캐시 데이터를 사용해 이전 상태를 복구할 수 이습니다.
-// 동일한 스트림 데이
+// 실시간 스트리밍 앱에서 사용하기 적합한 구조 이다.
+// 캐시를 통해 서버에서 미리 저장한 데이터를 전달해 클라이언트가 데이터를 원활하게 받을 수 있도록 한다.
+// 연결 복구시에도 캐시 데이터를 사용해 이전 상태를 복구할 수 있다.
+
 type Stream struct {
 	isStart bool          // 스트림 시작 여부
 	cache   *cache.Cache  // 스트림 데이터 캐시
@@ -219,10 +219,15 @@ func (s *Stream) StartStaticPush() {
 	}
 }
 
+// RTMP 스트림에서 정적 푸쉬를 중단할때 사용한다.
+// 정적 푸시는 서버가 특정 스트림을 다른 RTMP 서버로 자동 전달하는 기능이다.
+// 이 메서드는 연결된 정적 푸시 작업들을 종료하고, 관련 리소스를 정리한다.
 func (s *Stream) StopStaticPush() {
+	// 스트림의 고유 식별자.
 	key := s.info.Key
 
 	log.Debugf("StopStaticPush......%s", key)
+	// description
 	dscr := strings.Split(key, "/")
 	if len(dscr) < 1 {
 		return
@@ -233,6 +238,7 @@ func (s *Stream) StopStaticPush() {
 		return
 	}
 
+	// 앱네임 이후의 스트림 네임.
 	streamname := key[index+1:]
 	appname := dscr[0]
 
