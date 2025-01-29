@@ -13,6 +13,7 @@ import (
 	"github.com/gwuhaolin/livego/protocol/hls"
 	"github.com/gwuhaolin/livego/protocol/httpflv"
 	"github.com/gwuhaolin/livego/protocol/rtmp"
+	"github.com/gwuhaolin/livego/protocol/webrtc"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -198,6 +199,14 @@ func main() {
 		}
 		if app.Api {
 			startAPI(stream)
+		}
+
+		if app.Webrtc {
+			go func() {
+				if err := webrtc.StartWebRTCServer(":8080"); err != nil {
+					log.Printf("WebRTC server failed: %v", err)
+				}
+			}()
 		}
 
 		startRtmp(stream, hlsServer)

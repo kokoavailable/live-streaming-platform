@@ -38,6 +38,7 @@ type Application struct {
 	Hls        bool     `mapstructure:"hls"`
 	Flv        bool     `mapstructure:"flv"`
 	Api        bool     `mapstructure:"api"`
+	Webrtc     bool     `mapstructure:"webrtc"`
 	StaticPush []string `mapstructure:"static_push"`
 }
 
@@ -95,6 +96,7 @@ var defaultConf = ServerCfg{
 		Hls:        true,
 		Flv:        true,
 		Api:        true,
+		Webrtc:     true,
 		StaticPush: nil,
 	}},
 }
