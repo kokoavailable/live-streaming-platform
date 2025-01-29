@@ -16,6 +16,7 @@ const (
 NALU란 AVC 비디오 코덱에서 사용되는 데이터 단위로 Network Abstraction Layer Unit의 약자이다.
 코덱은 비디오 데이터를 처리 및 전송하기 위해 다양한 계층으로 구성되는데,
 그중 NAL 은 데이터 스트림을 네트워크 환경이나 다양한 미디어 컨테이너에 적합하게 분리 및 패키징 하는 역할을 한다.
+sps, pps idr slice 등을 포함하며  네트워크, 컨테이너 포맷에 적합한 형태로 변환된다.
 
 시퀀스 파라미터 셋
 SPS 는 비디오 스트림에서 전역 설정 정보를 의미한다. (비디오 스트림의 초기에 보통 나타난다)
@@ -71,12 +72,14 @@ var (
 var startCode = []byte{0x00, 0x00, 0x00, 0x01}
 var naluAud = []byte{0x00, 0x00, 0x00, 0x01, 0x09, 0xf0}
 
+// 메인 구조체
 type Parser struct {
-	frameType    byte
-	specificInfo []byte
-	pps          *bytes.Buffer
+	frameType    byte          // 프레임 타입
+	specificInfo []byte        // 구체 정보
+	pps          *bytes.Buffer // pps 버퍼
 }
 
+// avc 구성 레코드
 type sequenceHeader struct {
 	configVersion        byte //8bits
 	avcProfileIndication byte //8bits
@@ -91,28 +94,35 @@ type sequenceHeader struct {
 	ppsLen               int
 }
 
+// 최대 sps pps 길이를 받아 파서를 만든다.
 func NewParser() *Parser {
 	return &Parser{
 		pps: bytes.NewBuffer(make([]byte, maxSpsPpsLen)),
 	}
 }
 
+// 디 메서드는 시퀀스 헤더를 다룬다. 바이트 슬라이스를 받아, sps, pps를 파싱한다. sps는 시퀀스 파라미터 셋이고, pps 는 픽쳐 파라미터 셋이다.
+// 이둘은 비디오를 디코딩하는데 매우 중요하다.
 // return value 1:sps, value2 :pps
 func (parser *Parser) parseSpecificInfo(src []byte) error {
+	// 인풋의 길이를 먼저 체크해 패닉을 예방한다.
 	if len(src) < 9 {
 		return decDataNil
 	}
 	sps := []byte{}
 	pps := []byte{}
 
+	// 바이트 슬라이스에서 값을 추출해 시퀀스 헤더에 할당한다.
 	var seq sequenceHeader
-	seq.configVersion = src[0]
+	seq.configVersion = src[0] // avc 설정 파트
 	seq.avcProfileIndication = src[1]
-	seq.profileCompatility = src[2]
+	seq.profileCompatility = src[2] //
 	seq.avcLevelIndication = src[3]
 	seq.reserved1 = src[4] & 0xfc
 	seq.naluLen = src[4]&0x03 + 1
 	seq.reserved2 = src[5] >> 5
+
+	// sps와 pps를 읽는다.
 
 	//get sps
 	seq.spsNum = src[5] & 0x1f
@@ -121,8 +131,9 @@ func (parser *Parser) parseSpecificInfo(src []byte) error {
 	if len(src[8:]) < seq.spsLen || seq.spsLen <= 0 {
 		return spsDataError
 	}
-	sps = append(sps, startCode...)
-	sps = append(sps, src[8:(8+seq.spsLen)]...)
+
+	sps = append(sps, startCode...)             // annex b start code
+	sps = append(sps, src[8:(8+seq.spsLen)]...) // 실제 데이터
 
 	//get pps
 	tmpBuf := src[(8 + seq.spsLen):]
@@ -135,9 +146,11 @@ func (parser *Parser) parseSpecificInfo(src []byte) error {
 		return ppsDataError
 	}
 
-	pps = append(pps, startCode...)
-	pps = append(pps, tmpBuf[3:]...)
+	// pps, start 코드에 삽입
+	pps = append(pps, startCode...)  // annex b start code
+	pps = append(pps, tmpBuf[3:]...) // 실제 데이터
 
+	// 해당 내용 저장
 	parser.specificInfo = append(parser.specificInfo, sps...)
 	parser.specificInfo = append(parser.specificInfo, pps...)
 
@@ -154,10 +167,13 @@ func (parser *Parser) isNaluHeader(src []byte) bool {
 		src[3] == 0x01
 }
 
+// 주어진 바이트가 스타트 코드와 일치하는가 ?
 func (parser *Parser) naluSize(src []byte) (int, error) {
+
 	if len(src) < naluBytesLen {
 		return 0, fmt.Errorf("nalusizedata invalid")
 	}
+	// nal unit 의 사이즈계산, avcc포맷에서 일반적이다. 사이즈는 4바이트 빅 인디안
 	buf := src[:naluBytesLen]
 	size := int(0)
 	for i := 0; i < len(buf); i++ {
@@ -166,50 +182,59 @@ func (parser *Parser) naluSize(src []byte) (int, error) {
 	return size, nil
 }
 
+// 해당 메서드는 avcc 포맷(사이즈 프리픽스)을 annex b format(start codes) 로 바꾼다.
 func (parser *Parser) getAnnexbH264(src []byte, w io.Writer) error {
 	dataSize := len(src)
-	if dataSize < naluBytesLen {
+	if dataSize < naluBytesLen { // 최소 nalu 헤더 길이 체크
 		return videoDataInvalid
 	}
-	parser.pps.Reset()
+	parser.pps.Reset() // 버퍼 초기화
+	// aud nalu 작성
 	_, err := w.Write(naluAud)
 	if err != nil {
 		return err
 	}
 
-	index := 0
-	nalLen := 0
-	hasSpsPps := false
-	hasWriteSpsPps := false
+	index := 0              // 처리 오프셋
+	nalLen := 0             // 길이 저장
+	hasSpsPps := false      // 존재여부
+	hasWriteSpsPps := false //기록 여부
 
+	// 남은 데이터가 있는 동안 반복한다.
 	for dataSize > 0 {
+		// nalu의 크기를 가져온다. (사이즈 프리픽스)
 		nalLen, err = parser.naluSize(src[index:])
 		if err != nil {
 			return dataSizeNotMatch
 		}
-		index += naluBytesLen
-		dataSize -= naluBytesLen
+		index += naluBytesLen    // 나루 크기만큼의 오프셋 증가
+		dataSize -= naluBytesLen // 전체 데이터 크기에서 제외
+
+		// 유효사이즈 검사.
 		if dataSize >= nalLen && len(src[index:]) >= nalLen && nalLen > 0 {
-			nalType := src[index] & 0x1f
+			nalType := src[index] & 0x1f // 나루 타입을 추출한다.
 			switch nalType {
 			case nalu_type_aud:
+				// aud 프레임은 이미 앞에서 추가했다.
 			case nalu_type_idr:
+				// idr의 경우 (키 프레임)인 경우 sps/pps를 먼저 기록해야 한다.
 				if !hasWriteSpsPps {
 					hasWriteSpsPps = true
-					if !hasSpsPps {
+					if !hasSpsPps { // sps/pps가 없다면 specificinfo에서 가져온다.
 						if _, err := w.Write(parser.specificInfo); err != nil {
 							return err
 						}
-					} else {
+					} else { // 이미 있다면 pps 버퍼에서 가져온다
 						if _, err := w.Write(parser.pps.Bytes()); err != nil {
 							return err
 						}
 					}
 				}
-				fallthrough
+				fallthrough // 아래 케이스문까지 실행시키는 문법, IDR 프레임도 일반 슬라이스 NALU처럼 처리한다.
 			case nalu_type_slice:
 				fallthrough
 			case nalu_type_sei:
+				// NALU를 Annex B 포맷(스타트 코드 포함)으로 기록한다.
 				_, err := w.Write(startCode)
 				if err != nil {
 					return err
@@ -221,6 +246,7 @@ func (parser *Parser) getAnnexbH264(src []byte, w io.Writer) error {
 			case nalu_type_sps:
 				fallthrough
 			case nalu_type_pps:
+				// SPS/PPS 데이터를 pps 버퍼에 저장 (추후 IDR 프레임에서 사용)
 				hasSpsPps = true
 				_, err := parser.pps.Write(startCode)
 				if err != nil {
@@ -231,24 +257,29 @@ func (parser *Parser) getAnnexbH264(src []byte, w io.Writer) error {
 					return err
 				}
 			}
-			index += nalLen
-			dataSize -= nalLen
+			index += nalLen    // 현재 NALU 크기만큼 인덱스 이동
+			dataSize -= nalLen // 전체 데이터 크기에서 제외
 		} else {
+			// 바디 길이가 유효하지 않을떄.
 			return naluBodyLenError
 		}
 	}
 	return nil
 }
 
+// 주어진 바이트 스트림을 annex b 포맷으로 변환하거나 그대로 출력한다.
 func (parser *Parser) Parse(b []byte, isSeq bool, w io.Writer) (err error) {
 	switch isSeq {
 	case true:
+		// 시퀀스 헤더인 경우, SPS/PPS를 파싱하여 저장한다.
 		err = parser.parseSpecificInfo(b)
 	case false:
 		// is annexb
 		if parser.isNaluHeader(b) {
+			// 이미 Annex B 포맷이라면 그대로 출력
 			_, err = w.Write(b)
 		} else {
+			// AVCC 포맷이라면 getAnnexbH264를 호출하여 변환
 			err = parser.getAnnexbH264(b, w)
 		}
 	}
